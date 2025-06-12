@@ -1,4 +1,4 @@
-/**
+ /**
  * Main Node.js wrapper for vnstock MCP server
  * Manages Python environment and process execution
  */
@@ -21,12 +21,12 @@ class VnstockMCPWrapper {
      * Initialize the wrapper and verify system requirements
      */
     async initialize() {
-        console.log(chalk.blue('Initializing vnstock MCP server...'));
+        console.error(chalk.blue('Initializing vnstock MCP server...'));
         
         try {
             await this.checkPythonInstallation();
             await this.verifyPythonDependencies();
-            console.log(chalk.green('System requirements verified'));
+            console.error(chalk.green('System requirements verified'));
             return true;
         } catch (error) {
             console.error(chalk.red('Initialization failed:'), error.message);
@@ -43,15 +43,15 @@ class VnstockMCPWrapper {
         for (const command of pythonCommands) {
             try {
                 this.pythonPath = await which(command);
-                console.log(chalk.green(`Found Python: ${this.pythonPath}`));
+                console.error(chalk.green(`Found Python: ${this.pythonPath}`));
                 
                 // Verify Python version
                 const version = await this.getPythonVersion();
                 if (this.isValidPythonVersion(version)) {
-                    console.log(chalk.green(`Python version ${version} is compatible`));
+                    console.error(chalk.green(`Python version ${version} is compatible`));
                     return;
                 } else {
-                    console.log(chalk.yellow(`Python ${version} found, but version 3.8+ recommended`));
+                    console.error(chalk.yellow(`Python ${version} found, but version 3.8+ recommended`));
                 }
             } catch (error) {
                 // Continue to next command
@@ -96,14 +96,14 @@ class VnstockMCPWrapper {
      */
     async verifyPythonDependencies() {
         const requiredPackages = ['vnstock', 'mcp', 'pandas'];
-        console.log(chalk.blue('Checking Python dependencies...'));
+        console.error(chalk.blue('Checking Python dependencies...'));
 
         for (const packageName of requiredPackages) {
             try {
                 await this.checkPythonPackage(packageName);
-                console.log(chalk.green(`${packageName} is installed`));
+                console.error(chalk.green(`${packageName} is installed`));
             } catch (error) {
-                console.log(chalk.yellow(`${packageName} not found, attempting installation...`));
+                console.error(chalk.yellow(`${packageName} not found, attempting installation...`));
                 await this.installPythonPackage(packageName);
             }
         }
@@ -129,7 +129,7 @@ class VnstockMCPWrapper {
      */
     installPythonPackage(packageName) {
         return new Promise((resolve, reject) => {
-            console.log(chalk.blue(`Installing ${packageName}...`));
+            console.error(chalk.blue(`Installing ${packageName}...`));
             
             let installCommand = `${this.pythonPath} -m pip install ${packageName}`;
             if (packageName === 'vnstock') {
@@ -142,7 +142,7 @@ class VnstockMCPWrapper {
                     console.error(chalk.red(`Failed to install ${packageName}:`), stderr);
                     reject(error);
                 } else {
-                    console.log(chalk.green(`Successfully installed ${packageName}`));
+                    console.error(chalk.green(`Successfully installed ${packageName}`));
                     resolve();
                 }
             });
@@ -157,7 +157,7 @@ class VnstockMCPWrapper {
             throw new Error(`Python server file not found: ${this.pythonServerPath}`);
         }
 
-        console.log(chalk.blue('Starting vnstock MCP server...'));
+        console.error(chalk.blue('Starting vnstock MCP server...'));
 
         // Validate Python executable before starting
         if (!this.pythonPath) {
@@ -195,7 +195,7 @@ class VnstockMCPWrapper {
         // Setup signal handlers for graceful shutdown
         this.setupSignalHandlers();
 
-        console.log(chalk.green('vnstock MCP server is running'));
+        console.error(chalk.green('vnstock MCP server is running'));
         
         // Keep the process alive
         process.stdin.resume();
@@ -206,13 +206,13 @@ class VnstockMCPWrapper {
      */
     setupSignalHandlers() {
         const shutdown = (signal) => {
-            console.log(chalk.yellow(`\nReceived ${signal}, shutting down gracefully...`));
+            console.error(chalk.yellow(`\nReceived ${signal}, shutting down gracefully...`));
             
             if (this.serverProcess) {
                 this.serverProcess.kill(signal);
                 setTimeout(() => {
                     if (!this.serverProcess.killed) {
-                        console.log(chalk.red('Force killing server process...'));
+                        console.error(chalk.red('Force killing server process...'));
                         this.serverProcess.kill('SIGKILL');
                     }
                 }, 5000);
@@ -229,7 +229,7 @@ class VnstockMCPWrapper {
      * Display help information
      */
     displayHelp() {
-        console.log(chalk.blue(`Vnstock MCP Server - Vietnamese Stock Market Data
+        console.error(chalk.blue(`Vnstock MCP Server - Vietnamese Stock Market Data
 
 Usage:
   npx vnstock-mcp-server              Start the MCP server
@@ -258,14 +258,14 @@ https://github.com/vietnh/vnstock-mcp-server
      * Test system requirements and connection
      */
     async testConnection() {
-        console.log(chalk.blue('Testing system requirements...'));
+        console.error(chalk.blue('Testing system requirements...'));
         
         try {
             const success = await this.initialize();
             if (success) {
-                console.log(chalk.green('All tests passed! System is ready for vnstock MCP server.'));
+                console.error(chalk.green('All tests passed! System is ready for vnstock MCP server.'));
             } else {
-                console.log(chalk.red('System requirements test failed.'));
+                console.error(chalk.red('System requirements test failed.'));
                 process.exit(1);
             }
         } catch (error) {
@@ -301,7 +301,7 @@ async function main() {
     }
 
     if (args.includes('--version')) {
-        console.log(chalk.blue('vnstock-mcp-server version 1.0.0'));
+        console.error(chalk.blue('vnstock-mcp-server version 1.0.0'));
         return;
     }
 
