@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "vnstock": {
+      "command": "vnstock-mcp-server",
+      "args": [],
+      "env": {}
+    }
+  }
+}

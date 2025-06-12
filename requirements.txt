@@ -1,0 +1,15 @@
+# Core dependencies for vnstock-mcp-server
+vnstock>=3.2.0
+mcp>=0.1.0
+pandas>=1.5.0
+asyncio-compat>=0.2.0
+
+# Optional dependencies for enhanced functionality
+numpy>=1.21.0
+python-dateutil>=2.8.0
+
+# Development dependencies (install with: pip install -r requirements-dev.txt)
+# pytest>=7.0.0
+# black>=22.0.0
+# flake8>=5.0.0
+# mypy>=1.0.0

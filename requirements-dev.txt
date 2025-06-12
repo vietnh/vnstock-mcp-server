@@ -1,0 +1,31 @@
+# Development dependencies for vnstock-mcp-server
+# Install with: pip install -r requirements-dev.txt
+
+# Core runtime dependencies
+-r requirements.txt
+
+# Development and testing tools
+pytest>=7.0.0
+pytest-cov>=4.0.0
+pytest-asyncio>=0.21.0
+
+# Code formatting and linting
+black>=22.0.0
+flake8>=5.0.0
+isort>=5.10.0
+
+# Type checking
+mypy>=1.0.0
+types-requests>=2.28.0
+
+# Documentation generation
+sphinx>=5.0.0
+sphinx-rtd-theme>=1.0.0
+
+# Build and packaging tools
+build>=0.8.0
+twine>=4.0.0
+
+# Security scanning
+bandit>=1.7.0
+safety>=2.0.0
