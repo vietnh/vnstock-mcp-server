@@ -38,11 +38,8 @@
     "node": ">=14.0.0"
   },
   "dependencies": {
-    "child_process": "^1.0.2",
-    "fs-extra": "^11.1.0",
     "which": "^3.0.0",
-    "chalk": "^4.1.2",
-    "inquirer": "^8.2.5"
+    "chalk": "^4.1.2"
   },
   "devDependencies": {
     "jest": "^29.0.0",

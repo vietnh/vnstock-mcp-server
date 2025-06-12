@@ -47,7 +47,7 @@ try:
     # Instead of importing specific functions, we'll use vn.function_name() format
     test_access = hasattr(vn, 'stock_historical_data') or hasattr(vn, 'listing_companies')
     VNSTOCK_AVAILABLE = True
-    logger.info("vnstock library successfully imported")
+    print("vnstock library successfully imported", file=sys.stderr)
 except ImportError:
     VNSTOCK_AVAILABLE = False
     logging.warning("vnstock library not available. Install with: pip install -U vnstock")

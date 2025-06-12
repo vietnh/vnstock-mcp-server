@@ -131,7 +131,7 @@ class VnstockMCPWrapper {
         return new Promise((resolve, reject) => {
             console.log(chalk.blue(`📦 Installing ${packageName}...`));
             
-            const installCommand = `${this.pythonPath} -m pip install ${packageName}`;
+            let installCommand = `${this.pythonPath} -m pip install ${packageName}`;
             if (packageName === 'vnstock') {
                 // Install latest vnstock with upgrade flag
                 installCommand = `${this.pythonPath} -m pip install -U vnstock>=3.2.0`;
@@ -159,9 +159,15 @@ class VnstockMCPWrapper {
 
         console.log(chalk.blue('🚀 Starting vnstock MCP server...'));
 
+        // Validate Python executable before starting
+        if (!this.pythonPath) {
+            throw new Error('Python executable path not set');
+        }
+
         this.serverProcess = spawn(this.pythonPath, [this.pythonServerPath], {
             stdio: ['pipe', 'pipe', 'pipe'],
-            cwd: this.packageDir
+            cwd: this.packageDir,
+            env: { ...process.env, PYTHONPATH: this.packageDir }
         });
 
         // Handle server output
@@ -230,6 +236,8 @@ Usage:
   npx vnstock-mcp-server              Start the MCP server
   npx vnstock-mcp-server --help       Show this help message
   npx vnstock-mcp-server --test       Test system requirements
+  npx vnstock-mcp-server --install-deps Install Python dependencies
+  npx vnstock-mcp-server --version    Show version information
 
 Configuration:
   Add to Claude Desktop config file:
@@ -283,6 +291,18 @@ async function main() {
 
     if (args.includes('--test')) {
         await wrapper.testConnection();
+        return;
+    }
+
+    if (args.includes('--install-deps')) {
+        const DependencyInstaller = require('./install-deps');
+        const installer = new DependencyInstaller();
+        const success = await installer.install();
+        process.exit(success ? 0 : 1);
+    }
+
+    if (args.includes('--version')) {
+        console.log(chalk.blue('vnstock-mcp-server version 1.0.0'));
         return;
     }
 
