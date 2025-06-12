@@ -1,6 +1,6 @@
 {
   "name": "vnstock-mcp-server",
-  "version": "1.0.1",
+  "version": "1.0.8",
   "description": "MCP Server for Vietnamese Stock Market Data using vnstock library - NPX compatible wrapper",
   "main": "src/index.js",
   "bin": {

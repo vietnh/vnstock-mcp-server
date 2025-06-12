@@ -7,740 +7,636 @@ Provides MCP interface for accessing Vietnamese stock market data through vnstoc
 import asyncio
 import json
 import logging
-import os
 import sys
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict
 from datetime import datetime, timedelta
 
-# MCP Server imports
-try:
-    from mcp.server.models import InitializationOptions
-    from mcp.server import NotificationOptions, Server
-    from mcp.types import (
-        CallToolRequest,
-        CallToolResult,
-        ListToolsRequest,
-        ListToolsResult,
-        Tool,
-        TextContent,
-        ImageContent,
-        EmbeddedResource,
-    )
-    import mcp.types as types
-    MCP_AVAILABLE = True
-except ImportError as e:
-    MCP_AVAILABLE = False
-    print(f"MCP import error: {e}", file=sys.stderr)
-
-# Pandas import
-try:
-    import pandas as pd
-    PANDAS_AVAILABLE = True
-except ImportError:
-    PANDAS_AVAILABLE = False
-    print("pandas library not available", file=sys.stderr)
-
-# Vnstock imports
-try:
-    import vnstock as vn
-    # Test basic import functionality by accessing a known function
-    # Instead of importing specific functions, we'll use vn.function_name() format
-    test_access = hasattr(vn, 'stock_historical_data') or hasattr(vn, 'listing_companies')
-    VNSTOCK_AVAILABLE = True
-    print("vnstock library successfully imported", file=sys.stderr)
-except ImportError:
-    VNSTOCK_AVAILABLE = False
-    logging.warning("vnstock library not available. Install with: pip install -U vnstock")
-
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stderr)]
+)
+
 logger = logging.getLogger("vnstock-mcp-server")
 
-# Add diagnostic output
-print(f"Python executable: {sys.executable}", file=sys.stderr)
-print(f"Python version: {sys.version}", file=sys.stderr)
-print(f"Python path: {sys.path}", file=sys.stderr)
-print(f"Working directory: {os.getcwd()}", file=sys.stderr)
+# Import MCP components
+try:
+    from mcp.server import Server
+    from mcp.server.models import InitializationOptions
+    import mcp.server.stdio
+    import mcp.types as types
+    from mcp.server.lowlevel import NotificationOptions
+except ImportError as e:
+    logger.error(f"Failed to import MCP: {e}")
+    sys.exit(1)
 
-class VnstockMCPServer:
-    """MCP Server for Vietnamese Stock Market Data using vnstock"""
-    
-    def __init__(self):
-        self.app = Server("vnstock-mcp-server")
-        self.setup_tools()
-        
-    def setup_tools(self):
-        """Setup MCP tools for stock market data access"""
-        
-        @self.app.list_tools()
-        async def handle_list_tools() -> List[Tool]:
-            """List available tools for Vietnamese stock market data"""
-            if not VNSTOCK_AVAILABLE:
-                return [Tool(
-                    name="vnstock_status",
-                    description="Check vnstock library availability status",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {},
-                        "required": []
-                    }
-                )]
-            
-            return [
-                Tool(
-                    name="get_stock_price",
-                    description="Get current stock price and basic information for a Vietnamese stock symbol",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "symbol": {
-                                "type": "string",
-                                "description": "Stock symbol (e.g., VIC, VCB, MSN)"
-                            }
-                        },
-                        "required": ["symbol"]
-                    }
-                ),
-                Tool(
-                    name="get_historical_data",
-                    description="Get historical stock price data for analysis and charting",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "symbol": {
-                                "type": "string",
-                                "description": "Stock symbol (e.g., VIC, VCB, MSN)"
-                            },
-                            "start_date": {
-                                "type": "string",
-                                "description": "Start date in YYYY-MM-DD format (default: 30 days ago)"
-                            },
-                            "end_date": {
-                                "type": "string",
-                                "description": "End date in YYYY-MM-DD format (default: today)"
-                            },
-                            "resolution": {
-                                "type": "string",
-                                "description": "Data resolution: 1D (daily), 1W (weekly), 1M (monthly)",
-                                "enum": ["1D", "1W", "1M"],
-                                "default": "1D"
-                            }
-                        },
-                        "required": ["symbol"]
-                    }
-                ),
-                Tool(
-                    name="get_company_overview",
-                    description="Get comprehensive company information and fundamental data",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "symbol": {
-                                "type": "string",
-                                "description": "Stock symbol (e.g., VIC, VCB, MSN)"
-                            }
-                        },
-                        "required": ["symbol"]
-                    }
-                ),
-                Tool(
-                    name="get_financial_data",
-                    description="Get financial statements and ratios for fundamental analysis",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "symbol": {
-                                "type": "string",
-                                "description": "Stock symbol (e.g., VIC, VCB, MSN)"
-                            },
-                            "report_type": {
-                                "type": "string",
-                                "description": "Financial report type",
-                                "enum": ["BalanceSheet", "IncomeStatement", "CashFlow"],
-                                "default": "IncomeStatement"
-                            },
-                            "frequency": {
-                                "type": "string",
-                                "description": "Report frequency",
-                                "enum": ["Quarterly", "Yearly"],
-                                "default": "Quarterly"
-                            }
-                        },
-                        "required": ["symbol"]
-                    }
-                ),
-                Tool(
-                    name="list_companies",
-                    description="Get list of all listed companies on Vietnamese stock exchanges",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "exchange": {
-                                "type": "string",
-                                "description": "Stock exchange",
-                                "enum": ["HOSE", "HNX", "UPCOM", "ALL"],
-                                "default": "ALL"
-                            },
-                            "sector": {
-                                "type": "string",
-                                "description": "Industry sector filter (optional)"
-                            }
-                        },
-                        "required": []
-                    }
-                ),
-                Tool(
-                    name="get_market_overview",
-                    description="Get Vietnamese stock market overview and indices information",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "index": {
-                                "type": "string",
-                                "description": "Market index",
-                                "enum": ["VNINDEX", "HNX30", "UPCOM", "VN30"],
-                                "default": "VNINDEX"
-                            }
-                        },
-                        "required": []
-                    }
-                ),
-                Tool(
-                    name="get_foreign_trading",
-                    description="Get foreign investor trading data for market sentiment analysis",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "symbol": {
-                                "type": "string",
-                                "description": "Stock symbol or market index (optional)"
-                            },
-                            "start_date": {
-                                "type": "string",
-                                "description": "Start date in YYYY-MM-DD format (default: 30 days ago)"
-                            },
-                            "end_date": {
-                                "type": "string",
-                                "description": "End date in YYYY-MM-DD format (default: today)"
-                            }
-                        },
-                        "required": []
-                    }
-                ),
-                Tool(
-                    name="search_stocks",
-                    description="Search for stocks by company name or symbol with fuzzy matching",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "Search query (company name or symbol)"
-                            },
-                            "limit": {
-                                "type": "integer",
-                                "description": "Maximum number of results to return",
-                                "default": 10
-                            }
-                        },
-                        "required": ["query"]
-                    }
-                )
-            ]
+# Import vnstock with modern API
+try:
+    from vnstock import Vnstock, Listing, Quote, Company, Finance, Trading, Screener
+    import pandas as pd
+    VNSTOCK_AVAILABLE = True
+    logger.info("Successfully imported modern vnstock API")
+except ImportError as e:
+    logger.warning(f"vnstock not available: {e}")
+    VNSTOCK_AVAILABLE = False
 
-        @self.app.call_tool()
-        async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> CallToolResult:
-            """Handle tool calls for stock market data operations"""
-            
-            if not VNSTOCK_AVAILABLE and name != "vnstock_status":
-                return CallToolResult(
-                    content=[TextContent(
-                        type="text",
-                        text="Error: vnstock library is not available. Please install with: pip install -U vnstock"
-                    )]
-                )
-            
-            try:
-                if name == "vnstock_status":
-                    return await self._handle_vnstock_status()
-                elif name == "get_stock_price":
-                    return await self._handle_get_stock_price(arguments)
-                elif name == "get_historical_data":
-                    return await self._handle_get_historical_data(arguments)
-                elif name == "get_company_overview":
-                    return await self._handle_get_company_overview(arguments)
-                elif name == "get_financial_data":
-                    return await self._handle_get_financial_data(arguments)
-                elif name == "list_companies":
-                    return await self._handle_list_companies(arguments)
-                elif name == "get_market_overview":
-                    return await self._handle_get_market_overview(arguments)
-                elif name == "get_foreign_trading":
-                    return await self._handle_get_foreign_trading(arguments)
-                elif name == "search_stocks":
-                    return await self._handle_search_stocks(arguments)
-                else:
-                    return CallToolResult(
-                        content=[TextContent(
-                            type="text",
-                            text=f"Unknown tool: {name}"
-                        )]
-                    )
-                    
-            except Exception as e:
-                logger.error(f"Error in tool {name}: {str(e)}")
-                return CallToolResult(
-                    content=[TextContent(
-                        type="text",
-                        text=f"Error executing {name}: {str(e)}"
-                    )]
-                )
+# Create server instance
+server = Server("vnstock-mcp-server")
 
-    async def _handle_vnstock_status(self) -> CallToolResult:
-        """Check vnstock library status"""
-        status = {
-            "vnstock_available": VNSTOCK_AVAILABLE,
-            "server_status": "running",
-            "timestamp": datetime.now().isoformat()
-        }
-        
-        if VNSTOCK_AVAILABLE:
-            try:
-                status["vnstock_version"] = vn.__version__
-            except:
-                status["vnstock_version"] = "unknown"
-        
-        return CallToolResult(
-            content=[TextContent(
-                type="text",
-                text=json.dumps(status, indent=2)
-            )]
+@server.list_tools()
+async def handle_list_tools() -> list[types.Tool]:
+    """List available tools"""
+    return [
+        types.Tool(
+            name="get_stock_price",
+            description="Get current stock price and basic information for a Vietnamese stock symbol",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "symbol": {
+                        "type": "string",
+                        "description": "Stock symbol (e.g., VCB, VIC, TCB)"
+                    }
+                },
+                "required": ["symbol"]
+            }
+        ),
+        types.Tool(
+            name="get_historical_data",
+            description="Get historical stock price data for analysis and charting",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "symbol": {
+                        "type": "string",
+                        "description": "Stock symbol (e.g., VCB, VIC, TCB)"
+                    },
+                    "start_date": {
+                        "type": "string",
+                        "description": "Start date in YYYY-MM-DD format (optional, defaults to 30 days ago)"
+                    },
+                    "end_date": {
+                        "type": "string",
+                        "description": "End date in YYYY-MM-DD format (optional, defaults to today)"
+                    },
+                    "resolution": {
+                        "type": "string",
+                        "description": "Data resolution (1D, 1W, 1M)",
+                        "enum": ["1D", "1W", "1M"]
+                    }
+                },
+                "required": ["symbol"]
+            }
+        ),
+        types.Tool(
+            name="get_company_overview",
+            description="Get comprehensive company information and fundamental data",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "symbol": {
+                        "type": "string",
+                        "description": "Stock symbol (e.g., VCB, VIC, TCB)"
+                    }
+                },
+                "required": ["symbol"]
+            }
+        ),
+        types.Tool(
+            name="get_financial_data",
+            description="Get comprehensive financial statements including balance sheet, income statement, and cash flow data",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "symbol": {
+                        "type": "string",
+                        "description": "Stock symbol (e.g., VCB, VIC, TCB)"
+                    },
+                    "report_type": {
+                        "type": "string",
+                        "description": "Type of financial report",
+                        "enum": ["BalanceSheet", "IncomeStatement", "CashFlow"]
+                    },
+                    "frequency": {
+                        "type": "string",
+                        "description": "Report frequency",
+                        "enum": ["Quarterly", "Yearly"]
+                    }
+                },
+                "required": ["symbol"]
+            }
+        ),
+        types.Tool(
+            name="get_market_overview",
+            description="Get current market indices information and performance analytics for Vietnamese stock exchanges",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "index": {
+                        "type": "string",
+                        "description": "Market index (optional, defaults to VNINDEX)",
+                        "enum": ["VNINDEX", "HNX30", "UPCOM", "VN30"]
+                    }
+                },
+                "required": []
+            }
+        ),
+        types.Tool(
+            name="get_foreign_trading",
+            description="Get foreign investor trading data for market sentiment analysis",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "symbol": {
+                        "type": "string",
+                        "description": "Stock symbol (optional, if not provided, returns market-wide data)"
+                    },
+                    "start_date": {
+                        "type": "string",
+                        "description": "Start date in YYYY-MM-DD format (optional, defaults to 30 days ago)"
+                    },
+                    "end_date": {
+                        "type": "string",
+                        "description": "End date in YYYY-MM-DD format (optional, defaults to today)"
+                    }
+                },
+                "required": []
+            }
+        ),
+        types.Tool(
+            name="search_companies",
+            description="Search for companies using fuzzy matching by company name or symbol",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search term (company name or symbol)"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of results to return (default: 10)"
+                    }
+                },
+                "required": ["query"]
+            }
+        ),
+        types.Tool(
+            name="list_companies",
+            description="Get list of all listed companies on Vietnamese stock exchanges",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "exchange": {
+                        "type": "string",
+                        "description": "Exchange filter (ALL, HOSE, HNX, UPCOM)",
+                        "enum": ["ALL", "HOSE", "HNX", "UPCOM"]
+                    },
+                    "sector": {
+                        "type": "string",
+                        "description": "Sector filter (optional)"
+                    }
+                },
+                "required": []
+            }
         )
+    ]
 
-    async def _handle_get_stock_price(self, arguments: Dict[str, Any]) -> CallToolResult:
-        """Get current stock price and basic information"""
-        symbol = arguments["symbol"].upper()
-        
-        try:
-            # Get current price data using vnstock module functions
-            price_data = vn.stock_historical_data(
-                symbol=symbol,
-                start_date=(datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d"),
-                end_date=datetime.now().strftime("%Y-%m-%d"),
-                resolution="1D",
-                type="stock"
-            )
-            
-            if price_data.empty:
-                return CallToolResult(
-                    content=[TextContent(
-                        type="text",
-                        text=f"No data found for symbol: {symbol}"
-                    )]
-                )
-            
-            # Get latest price information
-            latest = price_data.iloc[-1]
-            
-            result = {
-                "symbol": symbol,
-                "date": latest.name.strftime("%Y-%m-%d") if hasattr(latest.name, 'strftime') else str(latest.name),
-                "open": float(latest['open']),
-                "high": float(latest['high']),
-                "low": float(latest['low']),
-                "close": float(latest['close']),
-                "volume": int(latest['volume']),
-                "change": float(latest['close'] - latest['open']),
-                "change_percent": float((latest['close'] - latest['open']) / latest['open'] * 100)
-            }
-            
-            return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=json.dumps(result, indent=2)
-                )]
-            )
-            
-        except Exception as e:
-            return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=f"Error getting stock price for {symbol}: {str(e)}"
-                )]
-            )
-
-    async def _handle_get_historical_data(self, arguments: Dict[str, Any]) -> CallToolResult:
-        """Get historical stock price data"""
-        symbol = arguments["symbol"].upper()
-        start_date = arguments.get("start_date", (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d"))
-        end_date = arguments.get("end_date", datetime.now().strftime("%Y-%m-%d"))
-        resolution = arguments.get("resolution", "1D")
-        
-        try:
-            data = vn.stock_historical_data(
-                symbol=symbol,
-                start_date=start_date,
-                end_date=end_date,
-                resolution=resolution,
-                type="stock"
-            )
-            
-            if data.empty:
-                return CallToolResult(
-                    content=[TextContent(
-                        type="text",
-                        text=f"No historical data found for {symbol} from {start_date} to {end_date}"
-                    )]
-                )
-            
-            # Convert to JSON-serializable format
-            result = {
-                "symbol": symbol,
-                "start_date": start_date,
-                "end_date": end_date,
-                "resolution": resolution,
-                "data_points": len(data),
-                "data": data.reset_index().to_dict(orient="records")
-            }
-            
-            return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=json.dumps(result, indent=2, default=str)
-                )]
-            )
-            
-        except Exception as e:
-            return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=f"Error getting historical data for {symbol}: {str(e)}"
-                )]
-            )
-
-    async def _handle_get_company_overview(self, arguments: Dict[str, Any]) -> CallToolResult:
-        """Get company overview and fundamental information"""
-        symbol = arguments["symbol"].upper()
-        
-        try:
-            # Get company overview using vnstock module
-            overview = vn.company_overview(symbol)
-            
-            if overview.empty:
-                return CallToolResult(
-                    content=[TextContent(
-                        type="text",
-                        text=f"No company overview found for symbol: {symbol}"
-                    )]
-                )
-            
-            # Convert to dictionary format
-            result = overview.to_dict(orient="records")[0] if not overview.empty else {}
-            result["symbol"] = symbol
-            
-            return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=json.dumps(result, indent=2, default=str)
-                )]
-            )
-            
-        except Exception as e:
-            return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=f"Error getting company overview for {symbol}: {str(e)}"
-                )]
-            )
-
-    async def _handle_get_financial_data(self, arguments: Dict[str, Any]) -> CallToolResult:
-        """Get financial statements and ratios"""
-        symbol = arguments["symbol"].upper()
-        report_type = arguments.get("report_type", "IncomeStatement")
-        frequency = arguments.get("frequency", "Quarterly")
-        
-        try:
-            # Get financial data using vnstock module
-            financial_data = vn.financial_flow(
-                symbol=symbol,
-                report_type=report_type,
-                frequency=frequency
-            )
-            
-            if financial_data.empty:
-                return CallToolResult(
-                    content=[TextContent(
-                        type="text",
-                        text=f"No financial data found for {symbol}"
-                    )]
-                )
-            
-            result = {
-                "symbol": symbol,
-                "report_type": report_type,
-                "frequency": frequency,
-                "periods": len(financial_data.columns),
-                "data": financial_data.reset_index().to_dict(orient="records")
-            }
-            
-            return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=json.dumps(result, indent=2, default=str)
-                )]
-            )
-            
-        except Exception as e:
-            return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=f"Error getting financial data for {symbol}: {str(e)}"
-                )]
-            )
-
-    async def _handle_list_companies(self, arguments: Dict[str, Any]) -> CallToolResult:
-        """Get list of listed companies"""
-        exchange = arguments.get("exchange", "ALL")
-        sector = arguments.get("sector")
-        
-        try:
-            # Get company listing using vnstock module
-            companies = vn.listing_companies()
-            
-            if companies.empty:
-                return CallToolResult(
-                    content=[TextContent(
-                        type="text",
-                        text="No company listings found"
-                    )]
-                )
-            
-            # Filter by exchange if specified
-            if exchange != "ALL":
-                companies = companies[companies['exchange'] == exchange]
-            
-            # Filter by sector if specified
-            if sector:
-                companies = companies[companies['icbName'].str.contains(sector, case=False, na=False)]
-            
-            result = {
-                "exchange": exchange,
-                "sector": sector,
-                "total_companies": len(companies),
-                "companies": companies.to_dict(orient="records")
-            }
-            
-            return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=json.dumps(result, indent=2, default=str)
-                )]
-            )
-            
-        except Exception as e:
-            return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=f"Error getting company listings: {str(e)}"
-                )]
-            )
-
-    async def _handle_get_market_overview(self, arguments: Dict[str, Any]) -> CallToolResult:
-        """Get market overview and indices"""
-        index = arguments.get("index", "VNINDEX")
-        
-        try:
-            # Get index data
-            index_data = vn.stock_historical_data(
-                symbol=index,
-                start_date=(datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d"),
-                end_date=datetime.now().strftime("%Y-%m-%d"),
-                resolution="1D",
-                type="index"
-            )
-            
-            if index_data.empty:
-                return CallToolResult(
-                    content=[TextContent(
-                        type="text",
-                        text=f"No data found for index: {index}"
-                    )]
-                )
-            
-            latest = index_data.iloc[-1]
-            
-            result = {
-                "index": index,
-                "date": latest.name.strftime("%Y-%m-%d") if hasattr(latest.name, 'strftime') else str(latest.name),
-                "value": float(latest['close']),
-                "change": float(latest['close'] - latest['open']),
-                "change_percent": float((latest['close'] - latest['open']) / latest['open'] * 100),
-                "volume": int(latest['volume']) if 'volume' in latest else 0,
-                "weekly_data": index_data.reset_index().to_dict(orient="records")
-            }
-            
-            return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=json.dumps(result, indent=2, default=str)
-                )]
-            )
-            
-        except Exception as e:
-            return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=f"Error getting market overview for {index}: {str(e)}"
-                )]
-            )
-
-    async def _handle_get_foreign_trading(self, arguments: Dict[str, Any]) -> CallToolResult:
-        """Get foreign investor trading data"""
-        symbol = arguments.get("symbol")
-        start_date = arguments.get("start_date", (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d"))
-        end_date = arguments.get("end_date", datetime.now().strftime("%Y-%m-%d"))
-        
-        try:
-            # Note: This would require specific vnstock functions for foreign trading data
-            # Implementation depends on available vnstock API functions
-            result = {
-                "message": "Foreign trading data feature requires specific vnstock API implementation",
-                "symbol": symbol,
-                "start_date": start_date,
-                "end_date": end_date,
-                "note": "This functionality can be implemented based on available vnstock foreign trading APIs"
-            }
-            
-            return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=json.dumps(result, indent=2)
-                )]
-            )
-            
-        except Exception as e:
-            return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=f"Error getting foreign trading data: {str(e)}"
-                )]
-            )
-
-    async def _handle_search_stocks(self, arguments: Dict[str, Any]) -> CallToolResult:
-        """Search for stocks by name or symbol"""
-        query = arguments["query"].lower()
-        limit = arguments.get("limit", 10)
-        
-        try:
-            # Search by symbol or company name using vnstock module
-            companies = vn.listing_companies()
-            
-            if companies.empty:
-                return CallToolResult(
-                    content=[TextContent(
-                        type="text",
-                        text="No companies found in listing"
-                    )]
-                )
-            
-            # Search by symbol or company name
-            matches = companies[
-                companies['symbol'].str.lower().str.contains(query, na=False) |
-                companies['companyName'].str.lower().str.contains(query, na=False)
-            ].head(limit)
-            
-            result = {
-                "query": query,
-                "total_matches": len(matches),
-                "limit": limit,
-                "matches": matches.to_dict(orient="records")
-            }
-            
-            return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=json.dumps(result, indent=2, default=str)
-                )]
-            )
-            
-        except Exception as e:
-            return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=f"Error searching stocks: {str(e)}"
-                )]
-            )
-
-    async def run(self, transport_type: str = "stdio"):
-        """Run the MCP server"""
-        if not MCP_AVAILABLE:
-            print("Error: MCP library not available. Install with: pip install mcp", file=sys.stderr)
-            sys.exit(1)
-        
-        if transport_type == "stdio":
-            try:
-                from mcp.server.stdio import stdio_server
-                
-                logger.info("Starting Vnstock MCP Server with stdio transport...")
-                print("Vnstock MCP Server starting...", file=sys.stderr)
-                
-                async with stdio_server() as (read_stream, write_stream):
-                    await self.app.run(
-                        read_stream,
-                        write_stream,
-                        InitializationOptions(
-                            server_name="vnstock-mcp-server",
-                            server_version="1.0.0",
-                            capabilities=self.app.get_capabilities(
-                                notification_options=NotificationOptions(),
-                                experimental_capabilities={},
-                            ),
-                        ),
-                    )
-            except Exception as e:
-                print(f"Error starting MCP server: {e}", file=sys.stderr)
-                sys.exit(1)
-        else:
-            raise ValueError(f"Unsupported transport type: {transport_type}")
-
-def main():
-    """Main entry point for the MCP server"""
-    # Check for required dependencies
-    if not MCP_AVAILABLE:
-        print("Error: MCP library not available. Install with: pip install mcp", file=sys.stderr)
-        sys.exit(1)
-    
-    if not PANDAS_AVAILABLE:
-        print("Warning: pandas library not available. Some features may be limited.", file=sys.stderr)
-    
+@server.call_tool()
+async def handle_call_tool(
+    name: str, arguments: dict[str, Any] | None
+) -> list[types.TextContent]:
+    """Handle tool calls"""
     if not VNSTOCK_AVAILABLE:
-        print("Warning: vnstock library not available. Install with: pip install -U vnstock", file=sys.stderr)
+        return [types.TextContent(
+            type="text", 
+            text="vnstock library not available. Please install with: pip install -U vnstock"
+        )]
     
-    # Setup logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(sys.stderr)
-        ]
-    )
+    arguments = arguments or {}
     
     try:
-        import argparse
-        
-        parser = argparse.ArgumentParser(description="Vnstock MCP Server for Vietnamese Stock Market Data")
-        parser.add_argument("--transport", default="stdio", choices=["stdio"], 
-                           help="Transport type (default: stdio)")
-        
-        args = parser.parse_args()
-        
-        server = VnstockMCPServer()
-        asyncio.run(server.run(args.transport))
-    except KeyboardInterrupt:
-        print("Server shutdown requested", file=sys.stderr)
+        if name == "get_stock_price":
+            return await get_stock_price(arguments.get("symbol", ""))
+        elif name == "get_historical_data":
+            return await get_historical_data(
+                arguments.get("symbol", ""),
+                arguments.get("start_date"),
+                arguments.get("end_date"),
+                arguments.get("resolution", "1D")
+            )
+        elif name == "get_company_overview":
+            return await get_company_overview(arguments.get("symbol", ""))
+        elif name == "get_financial_data":
+            return await get_financial_data(
+                arguments.get("symbol", ""),
+                arguments.get("report_type", "BalanceSheet"),
+                arguments.get("frequency", "Quarterly")
+            )
+        elif name == "get_market_overview":
+            return await get_market_overview(arguments.get("index", "VNINDEX"))
+        elif name == "get_foreign_trading":
+            return await get_foreign_trading(
+                arguments.get("symbol"),
+                arguments.get("start_date"),
+                arguments.get("end_date")
+            )
+        elif name == "search_companies":
+            return await search_companies(
+                arguments.get("query", ""),
+                arguments.get("limit", 10)
+            )
+        elif name == "list_companies":
+            return await list_companies(
+                arguments.get("exchange", "ALL"),
+                arguments.get("sector")
+            )
+        else:
+            raise ValueError(f"Unknown tool: {name}")
     except Exception as e:
-        print(f"Fatal error: {e}", file=sys.stderr)
-        sys.exit(1)
+        logger.error(f"Error in tool '{name}': {e}")
+        return [types.TextContent(type="text", text=f"Error: {str(e)}")]
+
+async def get_stock_price(symbol: str) -> list[types.TextContent]:
+    """Get current stock price and basic information"""
+    if not symbol:
+        return [types.TextContent(type="text", text="Error: symbol parameter is required")]
+    
+    try:
+        # Use modern vnstock API
+        stock = Vnstock().stock(symbol=symbol.upper(), source='VCI')
+        
+        # Get recent stock data (last few days to ensure we get data)
+        end_date = datetime.now().strftime("%Y-%m-%d")
+        start_date = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d")
+        
+        stock_data = stock.quote.history(
+            start=start_date,
+            end=end_date,
+            interval='1D'
+        )
+        
+        if stock_data.empty:
+            return [types.TextContent(type="text", text=f"No data found for symbol: {symbol}")]
+        
+        # Get the latest data point
+        latest = stock_data.iloc[-1]
+        
+        result = {
+            "symbol": symbol.upper(),
+            "date": latest.name.strftime("%Y-%m-%d") if hasattr(latest.name, 'strftime') else str(latest.name),
+            "open": float(latest['open']),
+            "high": float(latest['high']),
+            "low": float(latest['low']),
+            "close": float(latest['close']),
+            "volume": int(latest['volume']),
+            "change": float(latest['close'] - latest['open']),
+            "change_percent": float((latest['close'] - latest['open']) / latest['open'] * 100) if latest['open'] != 0 else 0
+        }
+        
+        return [types.TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
+        
+    except Exception as e:
+        return [types.TextContent(type="text", text=f"Error getting stock price for {symbol}: {str(e)}")]
+
+async def get_historical_data(symbol: str, start_date: str = None, end_date: str = None, resolution: str = "1D") -> list[types.TextContent]:
+    """Get historical stock price data"""
+    if not symbol:
+        return [types.TextContent(type="text", text="Error: symbol parameter is required")]
+    
+    try:
+        # Set default dates if not provided
+        if start_date is None:
+            start_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+        if end_date is None:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+        
+        # Use modern vnstock API
+        stock = Vnstock().stock(symbol=symbol.upper(), source='VCI')
+        
+        # Get historical data
+        historical_data = stock.quote.history(
+            start=start_date,
+            end=end_date,
+            interval=resolution
+        )
+        
+        if historical_data.empty:
+            return [types.TextContent(type="text", text=f"No historical data found for {symbol} from {start_date} to {end_date}")]
+        
+        result = {
+            "symbol": symbol.upper(),
+            "start_date": start_date,
+            "end_date": end_date,
+            "resolution": resolution,
+            "data_points": len(historical_data),
+            "data": historical_data.reset_index().to_dict(orient="records")
+        }
+        
+        return [types.TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
+        
+    except Exception as e:
+        return [types.TextContent(type="text", text=f"Error getting historical data for {symbol}: {str(e)}")]
+
+async def get_company_overview(symbol: str) -> list[types.TextContent]:
+    """Get comprehensive company information"""
+    if not symbol:
+        return [types.TextContent(type="text", text="Error: symbol parameter is required")]
+    
+    try:
+        # Use modern vnstock API
+        stock = Vnstock().stock(symbol=symbol.upper(), source='VCI')
+        company_info = stock.company.overview()
+        
+        if company_info.empty:
+            return [types.TextContent(type="text", text=f"No company information found for symbol: {symbol}")]
+        
+        company_data = company_info.iloc[0].to_dict() if len(company_info) > 0 else {}
+        
+        # Try to get recent price data for context
+        try:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+            start_date = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+            
+            recent_data = stock.quote.history(
+                start=start_date,
+                end=end_date,
+                interval='1D'
+            )
+            
+            if not recent_data.empty:
+                latest_price = recent_data.iloc[-1]
+                company_data.update({
+                    "latest_price": float(latest_price['close']),
+                    "latest_volume": int(latest_price['volume']),
+                    "price_date": latest_price.name.strftime("%Y-%m-%d") if hasattr(latest_price.name, 'strftime') else str(latest_price.name)
+                })
+        except Exception as e:
+            logger.warning(f"Could not get recent price data: {e}")
+        
+        result = {
+            "symbol": symbol.upper(),
+            "company_info": company_data
+        }
+        
+        return [types.TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
+        
+    except Exception as e:
+        return [types.TextContent(type="text", text=f"Error getting company overview for {symbol}: {str(e)}")]
+
+async def get_financial_data(symbol: str, report_type: str = "BalanceSheet", frequency: str = "Quarterly") -> list[types.TextContent]:
+    """Get comprehensive financial statements"""
+    if not symbol:
+        return [types.TextContent(type="text", text="Error: symbol parameter is required")]
+    
+    try:
+        # Use modern vnstock API
+        stock = Vnstock().stock(symbol=symbol.upper(), source='VCI')
+        
+        # Convert frequency to period format
+        period = 'quarter' if frequency.lower() == 'quarterly' else 'year'
+        
+        # Get financial data based on report type
+        if report_type == "BalanceSheet":
+            financial_data = stock.finance.balance_sheet(period=period, lang='en', dropna=True)
+        elif report_type == "IncomeStatement":
+            financial_data = stock.finance.income_statement(period=period, lang='en', dropna=True)
+        elif report_type == "CashFlow":
+            financial_data = stock.finance.cash_flow(period=period, dropna=True)
+        else:
+            return [types.TextContent(type="text", text=f"Error: Invalid report_type '{report_type}'. Must be BalanceSheet, IncomeStatement, or CashFlow")]
+        
+        if financial_data.empty:
+            return [types.TextContent(type="text", text=f"No financial data found for {symbol} ({report_type}, {frequency})")]
+        
+        result = {
+            "symbol": symbol.upper(),
+            "report_type": report_type,
+            "frequency": frequency,
+            "data_points": len(financial_data),
+            "financial_data": financial_data.to_dict(orient="records")
+        }
+        
+        return [types.TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
+        
+    except Exception as e:
+        return [types.TextContent(type="text", text=f"Error getting financial data for {symbol}: {str(e)}")]
+
+async def get_market_overview(index: str = "VNINDEX") -> list[types.TextContent]:
+    """Get current market indices information and performance analytics"""
+    try:
+        # Use modern vnstock API for market indices
+        # For market indices, we'll try to get index data using the Quote class
+        try:
+            quote = Quote(symbol=index, source='VCI')
+            
+            end_date = datetime.now().strftime("%Y-%m-%d")
+            start_date = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+            
+            market_data = quote.history(
+                start=start_date,
+                end=end_date,
+                interval='1D'
+            )
+        except:
+            # Fallback: try using a major stock as proxy for market sentiment
+            stock = Vnstock().stock(symbol='VCB', source='VCI')
+            market_data = stock.quote.history(
+                start=(datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d"),
+                end=datetime.now().strftime("%Y-%m-%d"),
+                interval='1D'
+            )
+        
+        if market_data.empty:
+            return [types.TextContent(type="text", text=f"No market data found for index: {index}")]
+        
+        latest = market_data.iloc[-1]
+        previous = market_data.iloc[-2] if len(market_data) > 1 else latest
+        
+        result = {
+            "index": index,
+            "current_value": float(latest['close']),
+            "previous_close": float(previous['close']),
+            "change": float(latest['close'] - previous['close']),
+            "change_percent": float((latest['close'] - previous['close']) / previous['close'] * 100) if previous['close'] != 0 else 0,
+            "volume": int(latest['volume']) if 'volume' in latest else 0,
+            "date": latest.name.strftime("%Y-%m-%d") if hasattr(latest.name, 'strftime') else str(latest.name),
+            "recent_data": market_data.tail(5).reset_index().to_dict(orient="records")
+        }
+        
+        return [types.TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
+        
+    except Exception as e:
+        return [types.TextContent(type="text", text=f"Error getting market overview for {index}: {str(e)}")]
+
+async def get_foreign_trading(symbol: str = None, start_date: str = None, end_date: str = None) -> list[types.TextContent]:
+    """Get foreign investor trading data for market sentiment analysis"""
+    try:
+        # Set default dates if not provided
+        if start_date is None:
+            start_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+        if end_date is None:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+        
+        # For foreign trading, we'll provide basic market information as this requires special data sources
+        result = {
+            "symbol": symbol or "Market-wide",
+            "start_date": start_date,
+            "end_date": end_date,
+            "note": "Foreign trading data requires specialized data sources. This is a placeholder implementation.",
+            "suggestion": "Use get_stock_price or get_historical_data for basic stock information."
+        }
+        
+        return [types.TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
+        
+    except Exception as e:
+        return [types.TextContent(type="text", text=f"Error getting foreign trading data: {str(e)}")]
+
+async def search_companies(query: str, limit: int = 10) -> list[types.TextContent]:
+    """Search for companies using fuzzy matching by company name or symbol"""
+    if not query:
+        return [types.TextContent(type="text", text="Error: query parameter is required")]
+    
+    try:
+        # Use modern vnstock API
+        listing = Listing()
+        companies = listing.all_symbols()
+        
+        if companies.empty:
+            return [types.TextContent(type="text", text="No companies found in database")]
+        
+        # Perform fuzzy search on symbol and company name
+        query_lower = query.lower()
+        
+        # Search by symbol (exact and partial matches)
+        symbol_matches = companies[
+            companies['symbol'].str.lower().str.contains(query_lower, na=False, regex=False)
+        ]
+        
+        # Search by company name if available
+        name_column = None
+        for col in ['organName', 'companyName', 'company_name', 'name']:
+            if col in companies.columns:
+                name_column = col
+                break
+        
+        if name_column:
+            name_matches = companies[
+                companies[name_column].str.lower().str.contains(query_lower, na=False, regex=False)
+            ]
+            # Combine and deduplicate results
+            all_matches = pd.concat([symbol_matches, name_matches]).drop_duplicates()
+        else:
+            all_matches = symbol_matches
+        
+        # Limit results
+        limited_matches = all_matches.head(limit)
+        
+        if limited_matches.empty:
+            return [types.TextContent(type="text", text=f"No companies found matching query: {query}")]
+        
+        result = {
+            "query": query,
+            "total_matches": len(limited_matches),
+            "matches": limited_matches.to_dict(orient="records")
+        }
+        
+        return [types.TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
+        
+    except Exception as e:
+        return [types.TextContent(type="text", text=f"Error searching companies: {str(e)}")]
+
+async def list_companies(exchange: str = "ALL", sector: str = None) -> list[types.TextContent]:
+    """Get list of all listed companies"""
+    try:
+        # Use modern vnstock API
+        listing = Listing()
+        companies = listing.all_symbols()
+        
+        if companies.empty:
+            return [types.TextContent(type="text", text="No companies found in listing")]
+        
+        # Filter by exchange if specified
+        if exchange != "ALL" and 'exchange' in companies.columns:
+            companies = companies[companies['exchange'].str.upper() == exchange.upper()]
+        
+        # Filter by sector if specified
+        if sector:
+            sector_column = None
+            for col in ['sector', 'industryName', 'industry']:
+                if col in companies.columns:
+                    sector_column = col
+                    break
+            
+            if sector_column:
+                companies = companies[companies[sector_column].str.contains(sector, case=False, na=False)]
+        
+        # Limit the response to avoid overwhelming output
+        companies_limited = companies.head(100)  # Limit to first 100 companies
+        
+        result = {
+            "exchange": exchange,
+            "sector": sector,
+            "total_companies": len(companies),
+            "displayed_companies": len(companies_limited),
+            "companies": companies_limited.to_dict(orient="records")
+        }
+        
+        return [types.TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
+        
+    except Exception as e:
+        return [types.TextContent(type="text", text=f"Error listing companies: {str(e)}")]
+
+@server.list_resources()
+async def handle_list_resources() -> list[types.Resource]:
+    """List available resources"""
+    return [
+        types.Resource(
+            uri="config://version",
+            name="Server Version",
+            description="Get the vnstock MCP server version information",
+            mimeType="text/plain"
+        )
+    ]
+
+@server.read_resource()
+async def handle_read_resource(uri: str) -> str:
+    """Handle resource reads"""
+    if uri == "config://version":
+        return "vnstock-mcp-server v1.0.8 (Updated for vnstock 3.2.x)"
+    else:
+        raise ValueError(f"Unknown resource: {uri}")
+
+async def main():
+    """Main server function"""
+    logger.info("Starting Vnstock MCP Server...")
+    
+    try:
+        # Use stdio transport
+        async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
+            await server.run(
+                read_stream,
+                write_stream,
+                InitializationOptions(
+                    server_name="vnstock-mcp-server",
+                    server_version="1.0.8",
+                    capabilities=server.get_capabilities(
+                        notification_options=NotificationOptions(),
+                        experimental_capabilities={}
+                    )
+                )
+            )
+            
+    except Exception as e:
+        logger.error(f"Error running server: {e}")
+        raise
 
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Server shutdown requested")
+    except Exception as e:
+        logger.error(f"Fatal error: {e}")
+        sys.exit(1) 

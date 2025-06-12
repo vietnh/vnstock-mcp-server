@@ -17,9 +17,9 @@ const srcPath = path.join(packageDir, 'src', 'index.js');
 const isGlobalInstall = __dirname.includes('node_modules');
 
 if (isGlobalInstall) {
-    console.log('🚀 Starting vnstock MCP server...');
+    console.error('Starting vnstock MCP server...');
 } else {
-    console.log('📦 Running vnstock MCP server via NPX...');
+    console.error('Running vnstock MCP server via NPX...');
 }
 
 // Execute the main Node.js entry point
@@ -29,24 +29,24 @@ const child = spawn('node', [srcPath], {
 });
 
 child.on('error', (error) => {
-    console.error('❌ Failed to start vnstock MCP server:', error.message);
+    console.error('Failed to start vnstock MCP server:', error.message);
     process.exit(1);
 });
 
 child.on('close', (code) => {
     if (code !== 0) {
-        console.error(`❌ vnstock MCP server exited with code ${code}`);
+        console.error(`vnstock MCP server exited with code ${code}`);
         process.exit(code);
     }
 });
 
 // Handle termination signals
 process.on('SIGINT', () => {
-    console.log('\n🛑 Shutting down vnstock MCP server...');
+    console.error('\nShutting down vnstock MCP server...');
     child.kill('SIGINT');
 });
 
 process.on('SIGTERM', () => {
-    console.log('\n🛑 Terminating vnstock MCP server...');
+    console.error('\nTerminating vnstock MCP server...');
     child.kill('SIGTERM');
 });

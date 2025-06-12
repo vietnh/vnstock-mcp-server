@@ -170,6 +170,9 @@ class VnstockMCPWrapper {
             env: { ...process.env, PYTHONPATH: this.packageDir }
         });
 
+        // Forward stdin from this process to Python server (MCP protocol)
+        process.stdin.pipe(this.serverProcess.stdin);
+
         // Handle server output
         this.serverProcess.stdout.on('data', (data) => {
             process.stdout.write(data);
@@ -197,7 +200,8 @@ class VnstockMCPWrapper {
 
         console.error(chalk.green('vnstock MCP server is running'));
         
-        // Keep the process alive
+        // Configure stdin for MCP protocol communication
+        process.stdin.setEncoding(null); // Ensure binary mode
         process.stdin.resume();
     }
 
